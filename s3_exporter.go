@@ -27,9 +27,19 @@ var (
 		"If the ListObjects operation was a success",
 		[]string{"bucket", "prefix"}, nil,
 	)
+	s3FirstModifiedObjectDate = prometheus.NewDesc(
+		prometheus.BuildFQName(namespace, "", "first_modified_object_date"),
+		"The modified date of the object that was modified least recently",
+		[]string{"bucket", "prefix"}, nil,
+	)
 	s3LastModifiedObjectDate = prometheus.NewDesc(
 		prometheus.BuildFQName(namespace, "", "last_modified_object_date"),
 		"The last modified date of the object that was modified most recently",
+		[]string{"bucket", "prefix"}, nil,
+	)
+	s3FirstModifiedObjectSize = prometheus.NewDesc(
+		prometheus.BuildFQName(namespace, "", "first_modified_object_size_bytes"),
+		"The size of the object that was modified least recently",
 		[]string{"bucket", "prefix"}, nil,
 	)
 	s3LastModifiedObjectSize = prometheus.NewDesc(
@@ -74,16 +84,20 @@ func (e *Exporter) Describe(ch chan<- *prometheus.Desc) {
 // Collect metrics
 func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 	var lastModified time.Time
+	var firstModified time.Time
 	var numberOfObjects float64
 	var totalSize int64
 	var biggestObjectSize int64
 	var lastObjectSize int64
+	var firstObjectSize int64
 
 	query := &s3.ListObjectsV2Input{
 		Bucket: &e.bucket,
 		Prefix: &e.prefix,
 	}
 
+	firstModified = time.Now()
+	lastModified = time.Unix(0, 0)
 	// Continue making requests until we've listed and compared the date of every object
 	truncated := true
 	for truncated {
@@ -102,6 +116,10 @@ func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 				lastModified = *item.LastModified
 				lastObjectSize = *item.Size
 			}
+			if item.LastModified.Before(firstModified) {
+				firstModified = *item.LastModified
+				firstObjectSize = *item.Size
+			}
 			if *item.Size > biggestObjectSize {
 				biggestObjectSize = *item.Size
 			}
@@ -113,12 +131,20 @@ func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 	ch <- prometheus.MustNewConstMetric(
 		s3ListSuccess, prometheus.GaugeValue, 1, e.bucket, e.prefix,
 	)
-	ch <- prometheus.MustNewConstMetric(
-		s3LastModifiedObjectDate, prometheus.GaugeValue, float64(lastModified.UnixNano()/1e9), e.bucket, e.prefix,
-	)
-	ch <- prometheus.MustNewConstMetric(
-		s3LastModifiedObjectSize, prometheus.GaugeValue, float64(lastObjectSize), e.bucket, e.prefix,
-	)
+	if (numberOfObjects > 0){
+		ch <- prometheus.MustNewConstMetric(
+			s3FirstModifiedObjectDate, prometheus.GaugeValue, float64(firstModified.Unix()), e.bucket, e.prefix,
+		)
+		ch <- prometheus.MustNewConstMetric(
+			s3LastModifiedObjectDate, prometheus.GaugeValue, float64(lastModified.Unix()), e.bucket, e.prefix,
+		)
+		ch <- prometheus.MustNewConstMetric(
+			s3FirstModifiedObjectSize, prometheus.GaugeValue, float64(firstObjectSize), e.bucket, e.prefix,
+		)
+		ch <- prometheus.MustNewConstMetric(
+			s3LastModifiedObjectSize, prometheus.GaugeValue, float64(lastObjectSize), e.bucket, e.prefix,
+		)
+	}
 	ch <- prometheus.MustNewConstMetric(
 		s3ObjectTotal, prometheus.GaugeValue, numberOfObjects, e.bucket, e.prefix,
 	)
